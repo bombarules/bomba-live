@@ -128,7 +128,7 @@ let viewer=null,dummy=null,tiles={},retry=null;
 function dummyStream(){if(dummy)return dummy;const c=document.createElement("canvas");c.width=c.height=2;c.getContext("2d").fillRect(0,0,2,2);dummy=c.captureStream(1);return dummy}
 function drawGrid(){const g=$("grid");g.innerHTML="";tiles={};
   devices.forEach(n=>{const b=document.createElement("button");b.className="tile";b.setAttribute("aria-label",n+" screen");
-    b.innerHTML='<video playsinline muted autoplay></video><div class="empty">Waiting for <br><span></span> to share</div><div class="cap"><i class="dot"></i><span class="nm"></span><span class="st">Offline</span></div>';
+    b.innerHTML='<video playsinline muted autoplay poster="data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7"></video><div class="empty">Waiting for <br><span></span> to share</div><div class="cap"><i class="dot"></i><span class="nm"></span><span class="st">Offline</span></div>';
     b.querySelector(".empty span").textContent=n;b.querySelector(".nm").textContent=n;
     b.onclick=()=>{if(!b.classList.contains("live"))return;if(document.fullscreenElement)document.exitFullscreen();else (b.requestFullscreen||b.webkitRequestFullscreen||function(){}).call(b)};
     g.appendChild(b);tiles[n]={el:b,call:null,video:b.querySelector("video")}});}
