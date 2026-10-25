@@ -83,7 +83,7 @@ input,select{width:100%;background:#120d14;border:1px solid var(--edge);border-r
     <select id="myName"></select>
     <div class="bar"><button class="btn main" id="startBtn">Start sharing</button><button class="btn stop" id="stopBtn" hidden>Stop sharing</button></div>
     <div class="status" id="shareStatus" role="status"></div>
-    <p class="note" id="cantShare" hidden>This device can’t share its screen from a web page. iPhones and iPads can still watch the wall here.</p>
+    <p class="note" id="cantShare" hidden>Phones and tablets can’t share from a web page. On Android, open the <b>Bomba app</b> → swipe up → <b>Live screens</b> → <b>Share</b>. iPhones and iPads can watch the wall here.</p>
   </div>
 </section>
 
@@ -91,7 +91,8 @@ input,select{width:100%;background:#120d14;border:1px solid var(--edge);border-r
   <h2>Wall code</h2>
   <p>Use the same code on every device. Keep it private — anyone with the code can watch.</p>
   <div class="row"><input id="codeIn" maxlength="9" autocapitalize="characters" autocomplete="off"><button class="btn" id="codeSave">Use</button></div>
-  <div class="bar"><button class="btn" id="codeNew">New code</button><button class="btn" id="codeCopy">Copy</button></div>
+  <div class="bar"><button class="btn" id="codeNew">New code</button><button class="btn" id="codeCopy">Copy code</button><button class="btn" id="linkCopy" hidden>Copy invite link</button></div>
+  <p id="linkNote" hidden>Open the invite link on your other computers — it fills in this code for you.</p>
 </div>
 
 <script src="peerjs.min.js"></script>
@@ -103,7 +104,10 @@ const ICE={iceServers:[{urls:["stun:stun.l.google.com:19302","stun:stun1.l.googl
 const ABC="ABCDEFGHJKMNPQRSTUVWXYZ23456789";
 const newCode=()=>{let s="";const r=crypto.getRandomValues(new Uint32Array(8));for(let i=0;i<8;i++)s+=ABC[r[i]%ABC.length];return s.slice(0,4)+"-"+s.slice(4)};
 const slug=s=>s.toLowerCase().replace(/[^a-z0-9]+/g,"-").replace(/^-|-$/g,"");
-let code=store.get("bomba-live-code",null);if(!code){code=newCode();store.set("bomba-live-code",code)}
+let code=store.get("bomba-live-code",null);
+const fromLink=/code=([A-Za-z0-9]{4}-?[A-Za-z0-9]{4})/.exec(location.hash+location.search);
+if(fromLink){const v=fromLink[1].toUpperCase().replace("-","");code=v.slice(0,4)+"-"+v.slice(4);store.set("bomba-live-code",code);try{history.replaceState(null,"",location.pathname)}catch(e){}}
+if(!code){code=newCode();store.set("bomba-live-code",code)}
 let devices=store.get("bomba-live-devices",["Home computer","Work computer","Phone","Tablet","Mac"]);
 const pid=name=>"bomba-"+code.toLowerCase().replace(/[^a-z0-9]/g,"")+"-"+slug(name);
 
@@ -116,6 +120,8 @@ $("codeBtn").onclick=()=>{$("codePanel").hidden=!$("codePanel").hidden};
 $("codeSave").onclick=()=>{const v=$("codeIn").value.toUpperCase().replace(/[^A-Z0-9]/g,"");if(v.length<6)return;code=v.length===8?v.slice(0,4)+"-"+v.slice(4):v;store.set("bomba-live-code",code);showCode();$("codePanel").hidden=true;restartAll()};
 $("codeNew").onclick=()=>{code=newCode();store.set("bomba-live-code",code);showCode();restartAll()};
 $("codeCopy").onclick=()=>{try{navigator.clipboard.writeText(code)}catch(e){}};
+if(/^https?:/.test(location.protocol)){$("linkCopy").hidden=false;$("linkNote").hidden=false;
+  $("linkCopy").onclick=()=>{const u=location.origin+location.pathname+"#code="+code;try{navigator.clipboard.writeText(u)}catch(e){}$("linkCopy").textContent="Link copied";setTimeout(()=>$("linkCopy").textContent="Copy invite link",2000)}}
 
 /* ---------- watch ---------- */
 let viewer=null,dummy=null,tiles={},retry=null;
