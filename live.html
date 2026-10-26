@@ -32,7 +32,18 @@ h1{font:600 20px Georgia,"Times New Roman",serif;margin:0;color:#f1d9bf;flex:1;m
 .tile .st{margin-left:auto;color:var(--dim);font-size:12px}
 .tile .empty{position:absolute;inset:0;display:grid;place-items:center;color:var(--dim);font-size:13px;text-align:center;padding:20px}
 .tile.live .empty{display:none}
-.tile:fullscreen{border-radius:0;border:0;aspect-ratio:auto}
+.tile:fullscreen{border-radius:0;border:0;aspect-ratio:auto;width:100vw;height:100vh;background:#000}
+.tile:fullscreen video{object-fit:cover;width:100%;height:100%}
+.tile:fullscreen.fit video{object-fit:contain}
+.tile:fullscreen .cap{opacity:0;transition:opacity .3s}
+.tile:fullscreen.bar .cap{opacity:1}
+.tile .fsx{display:none;position:absolute;top:14px;right:14px;width:44px;height:44px;border-radius:50%;border:1px solid var(--edge);background:rgba(10,7,11,.6);color:var(--ink);font-size:18px;align-items:center;justify-content:center}
+.tile:fullscreen.bar .fsx{display:flex}
+/* live wall: live screens share the whole window, waiting ones shrink to a line */
+.grid.wall{grid-template-columns:repeat(var(--cols),1fr)}
+.grid.wall .tile{aspect-ratio:auto;height:calc((100vh - 130px - env(safe-area-inset-top,0px)) / var(--rows) - 10px)}
+.grid.wall .tile:not(.live){display:none}
+.waiting{color:var(--dim);font-size:13px;margin-top:10px}
 .bar{display:flex;gap:8px;flex-wrap:wrap;margin:12px 0}
 .btn{background:rgba(232,196,160,.08);border:1px solid var(--edge);border-radius:12px;padding:10px 14px}
 .btn.main{background:var(--accent);color:#2a1f27;border-color:var(--accent);font-weight:600}
@@ -65,6 +76,7 @@ input,select{width:100%;background:#120d14;border:1px solid var(--edge);border-r
 
 <section id="watch">
   <div class="grid" id="grid"></div>
+  <div class="waiting" id="waiting" hidden></div>
   <div class="bar">
     <button class="btn" id="editDevs">Devices</button>
   </div>
@@ -128,11 +140,21 @@ let viewer=null,dummy=null,tiles={},retry=null;
 function dummyStream(){if(dummy)return dummy;const c=document.createElement("canvas");c.width=c.height=2;c.getContext("2d").fillRect(0,0,2,2);dummy=c.captureStream(1);return dummy}
 function drawGrid(){const g=$("grid");g.innerHTML="";tiles={};
   devices.forEach(n=>{const b=document.createElement("button");b.className="tile";b.setAttribute("aria-label",n+" screen");
-    b.innerHTML='<video playsinline muted autoplay poster="data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7"></video><div class="empty">Waiting for <br><span></span> to share</div><div class="cap"><i class="dot"></i><span class="nm"></span><span class="st">Offline</span></div>';
+    b.innerHTML='<video playsinline muted autoplay poster="data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7"></video><span class="fsx" aria-hidden="true">✕</span><div class="empty">Waiting for <br><span></span> to share</div><div class="cap"><i class="dot"></i><span class="nm"></span><span class="st">Offline</span></div>';
     b.querySelector(".empty span").textContent=n;b.querySelector(".nm").textContent=n;
-    b.onclick=()=>{if(!b.classList.contains("live"))return;if(document.fullscreenElement)document.exitFullscreen();else (b.requestFullscreen||b.webkitRequestFullscreen||function(){}).call(b)};
+    let hideT;const bar=()=>{b.classList.add("bar");clearTimeout(hideT);hideT=setTimeout(()=>b.classList.remove("bar"),2500)};
+    b.onclick=e=>{if(!b.classList.contains("live"))return;
+      if(document.fullscreenElement===b){if(e.target.classList.contains("fsx")){document.exitFullscreen();return}b.classList.toggle("fit");bar();return}
+      b.classList.remove("fit");(b.requestFullscreen||b.webkitRequestFullscreen||function(){}).call(b);bar()};
     g.appendChild(b);tiles[n]={el:b,call:null,video:b.querySelector("video")}});}
-function setLive(n,on){const t=tiles[n];if(!t)return;t.el.classList.toggle("live",on);t.el.querySelector(".st").textContent=on?"Live":"Offline";if(!on){t.video.srcObject=null;t.call=null}}
+function setLive(n,on){const t=tiles[n];if(!t)return;t.el.classList.toggle("live",on);t.el.querySelector(".st").textContent=on?"Live":"Offline";if(!on){t.video.srcObject=null;t.call=null}layoutWall()}
+function layoutWall(){const g=$("grid"),live=devices.filter(n=>tiles[n]&&tiles[n].el.classList.contains("live")),w=$("waiting");
+  if(!live.length){g.classList.remove("wall");w.hidden=true;return}
+  const land=innerWidth>=innerHeight,n=live.length;let cols,rows;
+  if(land){cols=Math.ceil(Math.sqrt(n));rows=Math.ceil(n/cols)}else{rows=Math.ceil(Math.sqrt(n));cols=Math.ceil(n/rows)}
+  g.style.setProperty("--cols",cols);g.style.setProperty("--rows",rows);g.classList.add("wall");
+  const off=devices.filter(d=>!live.includes(d));w.hidden=!off.length;w.textContent=off.length?"Waiting: "+off.join(" · "):"";}
+addEventListener("resize",()=>{if(tiles&&Object.keys(tiles).length)layoutWall()});
 function dial(n){const t=tiles[n];if(!viewer||!viewer.open||!t||t.call)return;
   const c=viewer.call(pid(n),dummyStream());if(!c)return;t.call=c;
   c.on("stream",s=>{t.video.srcObject=s;t.video.play().catch(()=>{});setLive(n,true);s.getVideoTracks().forEach(tr=>tr.onended=()=>setLive(n,false))});
