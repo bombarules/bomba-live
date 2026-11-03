@@ -33,12 +33,21 @@ h1{font:600 20px Georgia,"Times New Roman",serif;margin:0;color:#f1d9bf;flex:1;m
 .tile .empty{position:absolute;inset:0;display:grid;place-items:center;color:var(--dim);font-size:13px;text-align:center;padding:20px}
 .tile.live .empty{display:none}
 .tile:fullscreen{border-radius:0;border:0;aspect-ratio:auto;width:100vw;height:100vh;background:#000}
-.tile:fullscreen video{object-fit:cover;width:100%;height:100%}
-.tile:fullscreen.fit video{object-fit:contain}
+.tile:fullscreen video{object-fit:contain;width:100%;height:100%}
+.tile:fullscreen.fit video{object-fit:cover}
 .tile:fullscreen .cap{opacity:0;transition:opacity .3s}
 .tile:fullscreen.bar .cap{opacity:1}
 .tile .fsx{display:none;position:absolute;top:14px;right:14px;width:44px;height:44px;border-radius:50%;border:1px solid var(--edge);background:rgba(10,7,11,.6);color:var(--ink);font-size:18px;align-items:center;justify-content:center}
 .tile:fullscreen.bar .fsx{display:flex}
+.tile .ctl{display:none;position:absolute;top:14px;right:68px;width:44px;height:44px;border-radius:50%;border:1px solid var(--edge);background:rgba(10,7,11,.6);color:var(--ink);font-size:18px;align-items:center;justify-content:center}
+.tile:fullscreen.bar .ctl{display:flex}
+.tile.ctlOn .ctl{background:var(--live);color:#12241a}
+.tile.ctlOn{outline:2px solid var(--live);outline-offset:-2px}
+.tile.ctlOn video{touch-action:none}
+#ctlBar{position:fixed;left:0;right:0;bottom:0;z-index:60;background:var(--card);border-top:1px solid var(--edge);padding:8px;display:flex;gap:6px;flex-wrap:wrap;align-items:center}
+#ctlBar[hidden]{display:none}
+#ctlBar input{flex:1;min-width:130px}
+#ctlBar .st{color:var(--dim);font-size:12px;flex-basis:100%}
 /* live wall: live screens share the whole window, waiting ones shrink to a line */
 .grid.wall{grid-template-columns:repeat(var(--cols),1fr)}
 .grid.wall .tile{aspect-ratio:auto;height:calc((100vh - 130px - env(safe-area-inset-top,0px)) / var(--rows) - 10px)}
@@ -95,7 +104,8 @@ input,select{width:100%;background:#120d14;border:1px solid var(--edge);border-r
     <select id="myName"></select>
     <div class="bar"><button class="btn main" id="startBtn">Start sharing</button><button class="btn stop" id="stopBtn" hidden>Stop sharing</button></div>
     <div class="status" id="shareStatus" role="status"></div>
-    <p class="note" id="cantShare" hidden>Phones and tablets can’t share from a web page. On Android, open the <b>Overlook app</b> → swipe up → <b>Live screens</b> → <b>Share</b>. iPhones and iPads can watch the wall here.</p>
+    <div class="status" id="agentStat" role="status"></div>
+    <p class="note" id="cantShare" hidden>Phones and tablets can’t share from a web page. On Android, open the <b>Overlook app</b> or <b>Orbit</b> → swipe up → <b>Live screens</b> → <b>Share</b>. iPhones and iPads can watch the wall here.</p>
   </div>
 </section>
 
@@ -105,6 +115,19 @@ input,select{width:100%;background:#120d14;border:1px solid var(--edge);border-r
   <div class="row"><input id="codeIn" maxlength="9" autocapitalize="characters" autocomplete="off"><button class="btn" id="codeSave">Use</button></div>
   <div class="bar"><button class="btn" id="codeNew">New code</button><button class="btn" id="codeCopy">Copy code</button><button class="btn" id="linkCopy" hidden>Copy invite link</button></div>
   <p id="linkNote" hidden>Open the invite link on your other computers — it fills in this code for you.</p>
+</div>
+
+<div id="ctlBar" hidden>
+  <input id="ctlText" placeholder="Type, then Enter to send it to the controlled screen" autocomplete="off" autocapitalize="off">
+  <button class="btn" data-k="enter">Enter</button>
+  <button class="btn" data-k="esc">Esc</button>
+  <button class="btn" data-k="tab">Tab</button>
+  <button class="btn" data-k="backspace">⌫</button>
+  <button class="btn" data-k="up">↑</button>
+  <button class="btn" data-k="down">↓</button>
+  <button class="btn" data-k="left">←</button>
+  <button class="btn" data-k="right">→</button>
+  <span class="st" id="ctlStat"></span>
 </div>
 
 <script>/* PeerJS 1.5.4, MIT license, built in so the page needs no other files */
@@ -119,10 +142,191 @@ input,select{width:100%;background:#120d14;border:1px solid var(--edge);border-r
 
 </script>
 <script>
+/* Bomba Wall 1.0 — the piece every Bomba Live app shares.
+ *
+ * Keep this file IDENTICAL in OverLook, bomba-live, Orbit and BombaArgus.
+ * If you change it in one repo, copy it to the other three.
+ *
+ * It does two things:
+ *  1. ICE: STUN + TURN relay settings, so screens connect even when the
+ *     devices are on different networks (phone on cell data, computer on
+ *     Wi-Fi, work vs home).
+ *  2. Roster: keeps the list of device names the same on every screen
+ *     that uses the same wall code. Add or remove a device on one screen
+ *     and every other screen picks it up within a few seconds. No server
+ *     of our own: the first screen online holds the list at the PeerJS id
+ *     bomba-<code>--roster and the others sync with it; if it goes away,
+ *     another screen takes over.
+ *
+ * Page API (window.BombaWall):
+ *   BombaWall.ICE                 RTCConfiguration for new Peer(...,{config})
+ *   BombaWall.start(code, onList) begin syncing; onList(names) on remote change
+ *   BombaWall.setList(names)      call whenever this page edits its list
+ *   BombaWall.list()              current names
+ *   BombaWall.stop()
+ *
+ * Optional own TURN server: in any page's console run
+ *   localStorage.setItem("bomba-live-turn", JSON.stringify(
+ *     {urls:"turn:your.server:3478", username:"u", credential:"p"}))
+ */
+(function () {
+  "use strict";
+  var VERSION = "1.0";
+  var LS = {
+    get: function (k, d) { try { var v = localStorage.getItem(k); return v == null ? d : JSON.parse(v); } catch (e) { return d; } },
+    set: function (k, v) { try { localStorage.setItem(k, JSON.stringify(v)); } catch (e) {} }
+  };
+
+  /* ---------- 1. connection settings ---------- */
+  var ice = [
+    { urls: ["stun:stun.l.google.com:19302", "stun:stun1.l.google.com:19302"] },
+    { urls: ["turn:eu-0.turn.peerjs.com:3478", "turn:us-0.turn.peerjs.com:3478"], username: "peerjs", credential: "peerjsp" }
+  ];
+  var own = LS.get("bomba-live-turn", null);
+  if (own && own.urls) ice.unshift(own);
+  var ICE = { iceServers: ice };
+
+  /* ---------- 2. shared device roster ---------- */
+  var DEFAULTS = ["Home computer", "Work computer", "Phone", "Tablet", "Mac"];
+  var MAX = 60;
+  var slug = function (s) { return String(s).toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, ""); };
+  var clean = function (s) { return String(s || "").replace(/[\u0000-\u001f<>]/g, "").trim().slice(0, 30); };
+
+  /* meta: { slug: {n: name, t: stamp, del: bool} } — newest stamp wins */
+  var meta = LS.get("bomba-live-devmeta", null);
+  var maxT = 0;
+  function bump() { maxT = Math.max(Date.now(), maxT + 1); return maxT; }
+  function noteT(t) { if (t > maxT) maxT = t; }
+  if (!meta || typeof meta !== "object") {
+    meta = {};
+    var seed = LS.get("bomba-live-devices", DEFAULTS);
+    (Array.isArray(seed) ? seed : DEFAULTS).forEach(function (n, i) { n = clean(n); if (n) meta[slug(n)] = { n: n, t: i + 1, del: false }; });
+  }
+  Object.keys(meta).forEach(function (k) { noteT(meta[k].t || 0); });
+
+  function list() { return Object.keys(meta).filter(function (k) { return !meta[k].del; }).map(function (k) { return meta[k].n; }); }
+  function save() { LS.set("bomba-live-devmeta", meta); LS.set("bomba-live-devices", list()); }
+
+  /* Compare a page's list with ours: new names are adds, missing names are removals. */
+  function setList(names, quiet) {
+    if (!Array.isArray(names)) return;
+    var want = {}, changed = false;
+    names.forEach(function (n) { n = clean(n); if (n) want[slug(n)] = n; });
+    Object.keys(want).forEach(function (k) {
+      if (!meta[k] || meta[k].del || meta[k].n !== want[k]) { meta[k] = { n: want[k], t: bump(), del: false }; changed = true; }
+    });
+    Object.keys(meta).forEach(function (k) {
+      if (!meta[k].del && !want[k]) { meta[k] = { n: meta[k].n, t: bump(), del: true }; changed = true; }
+    });
+    if (changed) { save(); if (!quiet) push(); }
+  }
+
+  function merge(d) {
+    if (!d || d.t !== "bomba-roster" || !d.meta || typeof d.meta !== "object") return false;
+    var changed = false, keys = Object.keys(d.meta).slice(0, MAX * 2);
+    keys.forEach(function (k) {
+      var e = d.meta[k]; if (!e || typeof e.t !== "number") return;
+      var n = clean(e.n); if (!n || slug(n) !== k) return;
+      noteT(e.t);
+      if (!meta[k] || e.t > meta[k].t) { meta[k] = { n: n, t: e.t, del: !!e.del }; changed = true; }
+    });
+    if (Object.keys(meta).length > MAX * 2) { /* forget the oldest removed names */
+      Object.keys(meta).filter(function (k) { return meta[k].del; })
+        .sort(function (a, b) { return meta[a].t - meta[b].t; })
+        .slice(0, Object.keys(meta).length - MAX * 2).forEach(function (k) { delete meta[k]; });
+    }
+    if (changed) { save(); if (onList) { try { onList(list()); } catch (e) {} } }
+    return changed;
+  }
+  function pack() { return { t: "bomba-roster", v: 1, meta: meta }; }
+
+  /* ---------- networking ---------- */
+  var code = null, onList = null, host = null, cPeer = null, conn = null, clients = [], timer = null, claiming = false;
+  var rid = function (c) { return "bomba-" + String(c).toLowerCase().replace(/[^a-z0-9]/g, "") + "--roster"; };
+
+  function push() {
+    var p = pack();
+    if (host) clients.forEach(function (c) { try { c.open && c.send(p); } catch (e) {} });
+    else if (conn && conn.open) { try { conn.send(p); } catch (e) {} }
+  }
+
+  function tryHost() {
+    if (host || claiming || !code || !window.Peer) return;
+    claiming = true;
+    var p = new Peer(rid(code), { config: ICE });
+    p.on("open", function () {
+      claiming = false; host = p;
+      if (conn) { try { conn.close(); } catch (e) {} conn = null; }
+    });
+    p.on("connection", function (c) {
+      c.on("open", function () { clients.push(c); try { c.send(pack()); } catch (e) {} });
+      c.on("data", function (d) {
+        var ch = merge(d);
+        try { c.send(pack()); } catch (e) {}
+        if (ch) clients.forEach(function (o) { if (o !== c) { try { o.open && o.send(pack()); } catch (e) {} } });
+      });
+      var drop = function () { clients = clients.filter(function (o) { return o !== c; }); };
+      c.on("close", drop); c.on("error", drop);
+    });
+    p.on("error", function (e) {
+      if (host === p) return;               /* minor errors after we're up */
+      claiming = false;
+      try { p.destroy(); } catch (x) {}
+      if (e && e.type === "unavailable-id") join();
+    });
+    p.on("disconnected", function () { try { if (!p.destroyed) p.reconnect(); } catch (e) {} });
+    p.on("close", function () { if (host === p) { host = null; clients = []; } });
+  }
+
+  function join() {
+    if (!code || !window.Peer || (conn && (conn.open || conn._bombaPending))) return;
+    if (!cPeer || cPeer.destroyed) {
+      cPeer = new Peer(undefined, { config: ICE });
+      cPeer.on("error", function () {});
+      cPeer.on("disconnected", function () { try { if (!cPeer.destroyed) cPeer.reconnect(); } catch (e) {} });
+    }
+    var go = function () {
+      var c = cPeer.connect(rid(code), { reliable: true }); if (!c) return;
+      c._bombaPending = true; conn = c;
+      c.on("open", function () { c._bombaPending = false; try { c.send(pack()); } catch (e) {} });
+      c.on("data", merge);
+      var lost = function () { if (conn === c) conn = null; };
+      c.on("close", lost); c.on("error", lost);
+      setTimeout(function () { if (conn === c && !c.open) { try { c.close(); } catch (e) {} conn = null; } }, 10000);
+    };
+    if (cPeer.open) go(); else cPeer.once("open", go);
+  }
+
+  function tick() { if (!host && !(conn && conn.open)) tryHost(); }
+
+  function start(c, cb) {
+    stop();
+    onList = cb || null;
+    if (!c || !window.Peer) return;
+    code = c;
+    setList(LS.get("bomba-live-devices", list()), true); /* pick up edits made by older code */
+    tryHost();
+    timer = setInterval(tick, 12000);
+  }
+  function stop() {
+    clearInterval(timer); timer = null;
+    [host, cPeer].forEach(function (p) { if (p) { try { p.destroy(); } catch (e) {} } });
+    host = cPeer = conn = null; clients = []; claiming = false; code = null;
+  }
+
+  window.BombaWall = {
+    VERSION: VERSION, ICE: ICE,
+    start: start, stop: stop, setList: setList, list: list,
+    peerId: function (c, name) { return "bomba-" + String(c).toLowerCase().replace(/[^a-z0-9]/g, "") + "-" + slug(name); }
+  };
+})();
+
+</script>
+<script>
 (function(){
 const $=id=>document.getElementById(id);
 const store={get(k,d){try{const v=localStorage.getItem(k);return v==null?d:JSON.parse(v)}catch(e){return d}},set(k,v){try{localStorage.setItem(k,JSON.stringify(v))}catch(e){}}};
-const ICE={iceServers:[{urls:["stun:stun.l.google.com:19302","stun:stun1.l.google.com:19302"]}]};
+const ICE=window.BombaWall?BombaWall.ICE:{iceServers:[{urls:["stun:stun.l.google.com:19302","stun:stun1.l.google.com:19302"]}]};
 const ABC="ABCDEFGHJKMNPQRSTUVWXYZ23456789";
 const newCode=()=>{let s="";const r=crypto.getRandomValues(new Uint32Array(8));for(let i=0;i<8;i++)s+=ABC[r[i]%ABC.length];return s.slice(0,4)+"-"+s.slice(4)};
 const slug=s=>s.toLowerCase().replace(/[^a-z0-9]+/g,"-").replace(/^-|-$/g,"");
@@ -148,15 +352,23 @@ if(/^https?:/.test(location.protocol)){$("linkCopy").hidden=false;$("linkNote").
 /* ---------- watch ---------- */
 let viewer=null,dummy=null,tiles={},retry=null;
 function dummyStream(){if(dummy)return dummy;const c=document.createElement("canvas");c.width=c.height=2;c.getContext("2d").fillRect(0,0,2,2);dummy=c.captureStream(1);return dummy}
-function drawGrid(){const g=$("grid");g.innerHTML="";tiles={};
-  devices.forEach(n=>{const b=document.createElement("button");b.className="tile";b.setAttribute("aria-label",n+" screen");
-    b.innerHTML='<video playsinline muted autoplay poster="data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7"></video><span class="fsx" aria-hidden="true">✕</span><div class="empty">Waiting for <br><span></span> to share</div><div class="cap"><i class="dot"></i><span class="nm"></span><span class="st">Offline</span></div>';
+function drawGrid(){$("grid").innerHTML="";tiles={};devices.forEach(makeTile)}
+function makeTile(n){const g=$("grid");{const b=document.createElement("button");b.className="tile";b.setAttribute("aria-label",n+" screen");
+    b.innerHTML='<video playsinline muted autoplay poster="data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7"></video><span class="fsx" aria-hidden="true">✕</span><span class="ctl" aria-hidden="true">🖱</span><div class="empty">Waiting for <br><span></span> to share</div><div class="cap"><i class="dot"></i><span class="nm"></span><span class="st">Offline</span></div>';
     b.querySelector(".empty span").textContent=n;b.querySelector(".nm").textContent=n;
     let hideT;const bar=()=>{b.classList.add("bar");clearTimeout(hideT);hideT=setTimeout(()=>b.classList.remove("bar"),2500)};
-    b.onclick=e=>{if(!b.classList.contains("live"))return;
-      if(document.fullscreenElement===b){if(e.target.classList.contains("fsx")){document.exitFullscreen();return}b.classList.toggle("fit");bar();return}
+    b.onclick=e=>{if(e.target.classList.contains("ctl")){e.stopPropagation();if(b.classList.contains("live"))ctlToggle(n,b);return}
+      if(!b.classList.contains("live"))return;
+      if(document.fullscreenElement===b){if(e.target.classList.contains("fsx")){document.exitFullscreen();return}
+        if(ctlState.name===n)return;b.classList.toggle("fit");bar();return}
       b.classList.remove("fit");(b.requestFullscreen||b.webkitRequestFullscreen||function(){}).call(b);bar()};
-    g.appendChild(b);tiles[n]={el:b,call:null,video:b.querySelector("video")}});}
+    ctlAttach(b,b.querySelector("video"),n);
+    g.appendChild(b);tiles[n]={el:b,call:null,video:b.querySelector("video")}}}
+/* bring the grid in line with the device list without dropping screens already playing */
+function syncTiles(){if(!viewer){return}
+  Object.keys(tiles).forEach(n=>{if(!devices.includes(n)){const t=tiles[n];try{t.call&&t.call.close()}catch(e){}t.el.remove();delete tiles[n]}});
+  devices.forEach(n=>{if(!tiles[n]){makeTile(n);dial(n)}});
+  devices.forEach(n=>$("grid").appendChild(tiles[n].el));layoutWall()}
 function setLive(n,on){const t=tiles[n];if(!t)return;t.el.classList.toggle("live",on);t.el.querySelector(".st").textContent=on?"Live":"Offline";if(!on){t.video.srcObject=null;t.call=null}layoutWall()}
 function layoutWall(){const g=$("grid"),live=devices.filter(n=>tiles[n]&&tiles[n].el.classList.contains("live")),w=$("waiting");
   if(!live.length){g.classList.remove("wall");w.hidden=true;return}
@@ -181,12 +393,15 @@ function startWatch(){if(viewer&&!viewer.destroyed)return;drawGrid();
   try{window.BombaNative&&BombaNative.setKeepAwake&&BombaNative.setKeepAwake(true)}catch(e){}
   try{navigator.wakeLock&&navigator.wakeLock.request("screen").catch(()=>{})}catch(e){}}
 function stopWatch(){clearInterval(retry);if(viewer){try{viewer.destroy()}catch(e){}}viewer=null}
-function restartAll(){stopWatch();stopShare();if(!$("watch").hidden)startWatch();fillNames()}
+function restartAll(){stopWatch();stopShare();wallSync();if(!$("watch").hidden)startWatch();fillNames()}
+/* shared device list: same names on every screen with this wall code */
+function wallSync(){if(!window.BombaWall)return;BombaWall.start(code,list=>{devices=list;
+  if(!$("devPanel").hidden)drawDevs();if(!$("myName").disabled)fillNames();syncTiles()});devices=BombaWall.list()}
 
 /* devices editor */
 function drawDevs(){const ul=$("devList");ul.innerHTML="";devices.forEach((n,i)=>{const li=document.createElement("li");li.innerHTML="<span></span><button>Remove</button>";li.querySelector("span").textContent=n;
   li.querySelector("button").onclick=()=>{devices.splice(i,1);saveDevs()};ul.appendChild(li)})}
-function saveDevs(){store.set("bomba-live-devices",devices);drawDevs();fillNames();stopWatch();startWatch()}
+function saveDevs(){store.set("bomba-live-devices",devices);if(window.BombaWall)BombaWall.setList(devices);drawDevs();fillNames();if(viewer)syncTiles();else startWatch()}
 $("editDevs").onclick=()=>{$("devPanel").hidden=!$("devPanel").hidden;drawDevs()};
 $("addDev").onclick=()=>{const v=$("newDev").value.trim();if(!v||devices.some(d=>slug(d)===slug(v)))return;devices.push(v);$("newDev").value="";saveDevs()};
 
@@ -213,14 +428,75 @@ $("startBtn").onclick=async()=>{const name=$("myName").value;store.set("bomba-li
   sharer=new Peer(pid(name),{config:ICE});
   sharer.on("open",()=>shareUI(true,"<b>Sharing</b> as "+esc(name)+" · keep this tab open"));
   sharer.on("call",c=>{c.answer(stream);viewers++;upd();c.on("close",()=>{viewers=Math.max(0,viewers-1);upd()})});
+  sharer.on("connection",c=>{c.on("open",()=>ctlPing());c.on("data",d=>ctlForward(d))});
   sharer.on("error",e=>{if(e.type==="unavailable-id")shareUI(true,"Another screen is already sharing as "+esc(name)+". Pick a different device name.");});
   sharer.on("disconnected",()=>{try{sharer.reconnect()}catch(e){}});
   function upd(){shareUI(true,"<b>Sharing</b> as "+esc(name)+(viewers?" · "+viewers+" watching":"")+" · keep this tab open")}};
+/* remote control, receiving side: commands from a controller on the wall are
+   handed to the control agent running on this computer (127.0.0.1:8765),
+   which turns them into real mouse and keyboard input. */
+let ctlMoveQ=null,ctlPostBusy=false;
+function ctlForward(d){if(!d||typeof d!=="object"||!d.t)return;
+  if(d.t==="move"){ctlMoveQ=d;if(!ctlPostBusy)ctlFlushMove();return}
+  ctlPost(d)}
+function ctlFlushMove(){if(!ctlMoveQ)return;const d=ctlMoveQ;ctlMoveQ=null;ctlPost(d)}
+function ctlPost(d){ctlPostBusy=true;
+  fetch("http://127.0.0.1:8765/cmd",{method:"POST",headers:{"Content-Type":"application/json","X-Bomba-Code":code},body:JSON.stringify(d)})
+  .catch(()=>{}).then(()=>{ctlPostBusy=false;if(ctlMoveQ)ctlFlushMove()})}
+function ctlPing(){fetch("http://127.0.0.1:8765/ping").then(r=>{if(r.ok)$("agentStat").textContent="Control agent connected — this screen can be controlled from the wall."}).catch(()=>{$("agentStat").textContent="Control agent not running on this computer — this screen is view-only."})}
 function stopShare(){if(native&&window.BombaNative){try{BombaNative.stopScreenShare()}catch(e){}}
   if(stream){stream.getTracks().forEach(t=>t.stop());stream=null}if(sharer){try{sharer.destroy()}catch(e){}sharer=null}shareUI(false,"")}
 $("stopBtn").onclick=stopShare;
 if(native){try{const s=JSON.parse(BombaNative.shareState()||"{}");if(s.state)bombaShareStatus(s)}catch(e){}}
 
+/* remote control, controller side: while a tile is fullscreen, tap the mouse
+   button on it and your touches drive that screen — tap clicks, drag moves
+   and holds, two-finger tap right-clicks, two-finger slide scrolls. */
+const ctlState={name:null,conn:null};
+function ctlSend(d){const c=ctlState.conn;if(c&&c.open)try{c.send(d)}catch(e){}}
+function ctlNote(s){const el=$("ctlStat");if(el)el.textContent=s}
+function mapPt(v,px,py){if(!v.videoWidth)return null;const r=v.getBoundingClientRect();
+  const s=getComputedStyle(v).objectFit==="cover"?Math.max(r.width/v.videoWidth,r.height/v.videoHeight):Math.min(r.width/v.videoWidth,r.height/v.videoHeight);
+  const dw=v.videoWidth*s,dh=v.videoHeight*s,ox=r.left+(r.width-dw)/2,oy=r.top+(r.height-dh)/2;
+  const x=(px-ox)/dw,y=(py-oy)/dh;return(x<0||x>1||y<0||y>1)?null:{x:x,y:y}}
+function ctlAttach(el,video,name){
+  const pts=new Map();let start=null,dragging=false,lastMove=0,two=null,wheelAcc=0;
+  el.addEventListener("pointerdown",e=>{if(ctlState.name!==name)return;pts.set(e.pointerId,{x:e.clientX,y:e.clientY});
+    if(pts.size===1){start={x:e.clientX,y:e.clientY,t:Date.now()};dragging=false}
+    else if(pts.size===2){const p=[...pts.values()];two={x:(p[0].x+p[1].x)/2,y:(p[0].y+p[1].y)/2,t:Date.now(),moved:0}}});
+  el.addEventListener("pointermove",e=>{if(ctlState.name!==name||!pts.has(e.pointerId))return;
+    pts.set(e.pointerId,{x:e.clientX,y:e.clientY});
+    if(pts.size===2&&two){const p=[...pts.values()];const cy=(p[0].y+p[1].y)/2;const dy=cy-two.y;two.y=cy;two.moved+=Math.abs(dy);
+      wheelAcc+=dy;if(Math.abs(wheelAcc)>=36){ctlSend({t:"wheel",d:wheelAcc<0?1:-1});wheelAcc=0}}
+    else if(pts.size===1&&start){const dx=e.clientX-start.x,dy=e.clientY-start.y;
+      if(!dragging&&Math.hypot(dx,dy)>9){dragging=true;const p0=mapPt(video,start.x,start.y);if(p0)ctlSend({t:"down",b:0,x:p0.x,y:p0.y})}
+      if(dragging&&Date.now()-lastMove>40){lastMove=Date.now();const p=mapPt(video,e.clientX,e.clientY);if(p)ctlSend({t:"move",x:p.x,y:p.y})}}});
+  const up=e=>{if(ctlState.name!==name){pts.delete(e.pointerId);return}
+    if(pts.size===2&&two){if(Date.now()-two.t<300&&two.moved<12){const p=mapPt(video,two.x,two.y);if(p)ctlSend({t:"click",b:2,x:p.x,y:p.y})}two=null}
+    else if(pts.size===1&&start){const p=mapPt(video,e.clientX,e.clientY);
+      if(dragging){if(p)ctlSend({t:"move",x:p.x,y:p.y});ctlSend({t:"up",b:0})}
+      else if(Date.now()-start.t<500&&p)ctlSend({t:"click",b:0,x:p.x,y:p.y});
+      start=null;dragging=false}
+    pts.delete(e.pointerId)};
+  el.addEventListener("pointerup",up);el.addEventListener("pointercancel",up);
+  el.addEventListener("wheel",e=>{if(ctlState.name!==name)return;e.preventDefault();ctlSend({t:"wheel",d:e.deltaY>0?1:-1})},{passive:false});
+}
+function ctlToggle(name,el){if(ctlState.name===name){ctlStop();return}
+  ctlStop();if(!viewer||!viewer.open){return}
+  const conn=viewer.connect(pid(name),{reliable:true,serialization:"json"});
+  ctlState.name=name;ctlState.conn=conn;el.classList.add("ctlOn");
+  conn.on("open",()=>{$("ctlBar").hidden=false;ctlNote("Controlling "+name+" — tap to click, drag to drag, two-finger tap right-clicks, two-finger slide scrolls")});
+  conn.on("data",d=>{if(d&&d.note)ctlNote(d.note)});
+  conn.on("close",()=>{if(ctlState.name===name)ctlStop()});}
+function ctlStop(){if(ctlState.conn)try{ctlState.conn.close()}catch(e){}
+  ctlState.name=null;ctlState.conn=null;$("ctlBar").hidden=true;
+  document.querySelectorAll(".tile.ctlOn").forEach(t=>t.classList.remove("ctlOn"))}
+document.addEventListener("fullscreenchange",()=>{if(!document.fullscreenElement)ctlStop()});
+$("ctlText").addEventListener("keydown",e=>{if(e.key==="Enter"){e.preventDefault();
+  if($("ctlText").value){ctlSend({t:"text",s:$("ctlText").value});$("ctlText").value=""}}});
+document.querySelectorAll("#ctlBar [data-k]").forEach(b=>b.onclick=()=>ctlSend({t:"key",k:b.getAttribute("data-k")}));
+
+wallSync();
 startWatch();
 })();
 </script>
